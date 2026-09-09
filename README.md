@@ -2,105 +2,119 @@
 
 [![CI](https://github.com/Abhishantpadam/whatsapp-telegram-automation/actions/workflows/ci.yml/badge.svg)](https://github.com/Abhishantpadam/whatsapp-telegram-automation/actions/workflows/ci.yml)
 
-A robust browser automation and data pipeline built with **Node.js**, **Playwright**, and the **Telegram Bot API**. It monitors WhatsApp channels in real time, extracts new text posts, and forwards them to a Telegram channel with persistent state tracking, smart message chunking, and rate-limit handling.
+## Overview
 
-It also includes CLI utilities for historical message synchronization and Telegram channel administration.
+A Node.js automation tool that monitors a WhatsApp channel using Playwright and archives new posts to a Telegram channel. It uses persistent message IDs to prevent duplicate forwarding and includes automated tests and GitHub Actions CI.
+
+Built around a real-world problem: WhatsApp channels do not provide global keyword search or easy multi-device export, making job alert channels difficult to index. This tool bridges the gap by streaming new posts into a searchable, categorized Telegram channel in real time.
 
 ---
 
-## Architecture Overview
+## Features
+
+* **WhatsApp Web Monitoring:** Real-time DOM monitoring powered by Playwright.
+* **Persistent Chromium Session:** Retains authenticated WhatsApp Web cookies in a dedicated profile directory, eliminating repeated QR code scans.
+* **Smart Post Detection:** Automatically expands collapsed *"Read more"* buttons before reading text, and indexes pre-existing posts on startup to avoid spamming the channel.
+* **Failure-Safe Deduplication:** Saves message IDs to disk (`data/seen-messages.json`) **only after** Telegram confirms successful receipt (two-phase commit).
+* **Boundary-Aware Message Chunking:** Splits posts exceeding Telegram's 4,096-character limit at the nearest newline or space boundary, appending `[Part X/Y]` indicators.
+* **Rate-Limit (429) Retry Engine:** Parses Telegram's `retry_after` parameters and automatically backs off before retrying.
+* **Historical Batch Ingestion:** Dedicated CLI (`sender.js`) to transfer historical messages by count, scroll depth, or date.
+* **Channel Administration:** Interactive CLI utility (`cleaner.js`) to purge, time-filter, or keyword-clean Telegram messages.
+* **Automated Test Suite:** 36 automated unit tests utilizing Node.js's native `node:test` runner.
+* **GitHub Actions CI:** Automated continuous integration pipeline running test suites on every push and pull request.
+
+---
+
+## Architecture
+
+The system uses a modular pipeline separating browser interaction, data extraction, normalization, persistence, and external API communication:
 
 ```
                       WhatsApp Web
                            │
                            ▼
                   ┌──────────────────┐
-                  │ Playwright Engine│
-                  │ (Persistent Auth)│
+                  │whatsapp-client.js│  (Playwright Browser Actions)
+                  └────────┬─────────┘
+                           │ raw { messageId, text }
+                           ▼
+                  ┌──────────────────┐
+                  │message-parser.js │  (Pure Data Normalization)
+                  └────────┬─────────┘
+                           │ validated message
+                           ▼
+                  ┌──────────────────┐
+                  │message-storage.js│  (Atomic State Persistence)
                   └────────┬─────────┘
                            │
-             ┌─────────────┼─────────────┐
+             ┌─────────────┴─────────────┐
              ▼                           ▼
       ┌──────────────┐            ┌──────────────┐
-      │  watcher.js  │            │  sender.js   │
-      │  (Real-Time  │            │ (Historical  │
-      │  Monitoring) │            │  Batch CLI)  │
-      └──────┬───────┘            └──────┬───────┘
-             │                           │
-             ├───────────────────────────┤
-             ▼                           ▼
-     ┌──────────────┐            ┌──────────────┐
-     │ Deduplication│            │ Text Chunker │
-     │  (JSON Store)│            │ & Retry Gate │
-     └──────┬───────┘            └──────┬───────┘
-            │                           │
-            └─────────────┬─────────────┘
-                          ▼
-                  Telegram Bot API
-                          │
-                          ▼
-                 Telegram Destination
-                          ▲
-                          │ (Admin Clean / Manage)
-                  ┌───────┴──────┐
-                  │  cleaner.js  │
-                  └──────────────┘
+      │telegram-utils│            │telegram-send │  (429 Rate-Limit Retry)
+      │  (Chunking)  │            └──────┬───────┘
+      └──────────────┘                   │
+                                         ▼
+                                  ┌──────────────┐
+                                  │telegram-api  │  (HTTP / Fetch Layer)
+                                  └──────┬───────┘
+                                         │
+                                         ▼
+                                  Telegram Bot API
 ```
+
+`watcher.js` acts as the high-level orchestrator coordinating these modules.
 
 ---
 
-## Key Features
+## Tech Stack
 
-### 1. Real-Time Browser Automation (`watcher.js`)
-* **Persistent Authentication:** Uses Playwright's `launchPersistentContext` to preserve WhatsApp Web session cookies, preventing repeated QR code logins.
-* **Dynamic DOM Handling:** Automatically locates and expands WhatsApp's *"Read more"* buttons before reading post contents.
-* **Channel Guard:** Detects if the target channel loses focus or navigates away and gracefully waits for reconnection.
-
-### 2. Failure-Safe State Persistence
-* **No Lost Posts:** Processed message IDs are stored persistently in `data/seen-messages.json`.
-* **Atomic State Updates:** A message ID is committed to storage **only after** Telegram acknowledges successful delivery. If Telegram fails or encounters network drops, the message is retained for automatic retry on the next cycle.
-
-### 3. API Reliability & Rate-Limit Handling
-* **Boundary-Aware Chunking:** Automatically splits posts exceeding Telegram's 4,096-character limit at the nearest newline or word boundary, tagging multi-part posts with `[Part X/Y]`.
-* **Exponential Backoff on HTTP 429:** Parses Telegram's `retry_after` parameter and automatically backs off before retrying.
-
-### 4. Historical Batch Ingestion CLI (`sender.js`)
-* Fetch and synchronize historical channel posts on demand:
-  * By post count: `node sender.js --count 10`
-  * With automatic page scrolling: `node sender.js --count 20 --scroll 5`
-  * Filter by specific dates: `node sender.js --date YYYY-MM-DD`
-
-### 5. Channel Maintenance & Administration (`cleaner.js`)
-* Interactive terminal CLI to purge or manage channel contents:
-  * Bulk delete all posts with safety confirmation.
-  * Time-windowed deletion (`< 48 hours` or `> 48 hours`).
-  * Targeted keyword-based message deletion.
+* **Runtime:** Node.js (v18.0.0+)
+* **Browser Automation:** Playwright (Chromium)
+* **API Integration:** Telegram Bot API
+* **Testing Framework:** Node.js native test runner (`node:test` + `node:assert/strict`)
+* **CI/CD:** GitHub Actions
 
 ---
 
 ## Project Structure
 
-```
-whatsapp-channel-archiver/
+```text
+whatsapp-telegram-automation/
+├── .github/
+│   └── workflows/
+│       └── ci.yml             # GitHub Actions CI pipeline
 ├── data/
-│   ├── .gitkeep
-│   └── seen-messages.json    # Local persistent message ID store (gitignored)
-├── .env.example              # Environment template
-├── .gitignore                # Protects secrets, session profile, and state
-├── cleaner.js                # Telegram channel management utility
-├── package.json              # Project metadata and dependencies
-├── sender.js                 # Historical message batching CLI
-├── watcher.js                # Continuous real-time monitor
-└── README.md                 # Documentation
+│   └── .gitkeep               # Persistent storage directory (seen-messages.json gitignored)
+├── src/
+│   ├── config.js              # Centralized environment validation
+│   ├── message-parser.js      # Pure data extraction & text normalization
+│   ├── message-storage.js     # Isolated JSON file persistence & deduplication
+│   ├── telegram-api.js        # Low-level Telegram HTTP fetch client
+│   ├── telegram-sender.js     # Telegram dispatch with 429 rate-limit retry logic
+│   ├── telegram-utils.js      # Word/newline message chunking & part headers
+│   └── whatsapp-client.js     # Playwright browser lifecycle & DOM locators
+├── tests/
+│   ├── config.test.js         # Configuration & environment tests
+│   ├── message-parser.test.js # Normalization & validation tests
+│   ├── message-storage.test.js# File isolation & deduplication tests
+│   ├── telegram-sender.test.js# Mocked 429 rate limit & backoff tests
+│   └── telegram-utils.test.js # Boundary chunking & part indicator tests
+├── .env.example               # Configuration template
+├── .gitignore                 # Excludes secrets, profile data, and state
+├── cleaner.js                 # Telegram channel administration CLI
+├── package.json               # Dependencies and scripts
+├── sender.js                  # Historical batch message transfer CLI
+├── watcher.js                 # Main real-time monitoring coordinator
+└── README.md                  # Project documentation
 ```
 
 ---
 
-## Quick Start
+## Setup & Prerequisites
 
 ### 1. Prerequisites
-* **Node.js**: v18.0.0 or higher
-* **npm**: v9.0.0 or higher
+* Node.js v18.0.0 or higher
+* npm v9.0.0 or higher
 * A Telegram Bot Token from [@BotFather](https://t.me/botfather)
 
 ### 2. Installation
@@ -116,55 +130,95 @@ npm install
 npx playwright install chromium
 ```
 
-### 3. Environment Setup
-Copy the template and fill in your credentials:
+### 3. Configuration
+Copy the sample environment file:
 ```bash
 cp .env.example .env
 ```
 
-Open `.env` and set:
-* `TELEGRAM_BOT_TOKEN`: Token obtained from BotFather.
-* `TELEGRAM_CHANNEL_ID`: Channel username or numerical ID (`-100...`).
-* `TELEGRAM_ADMIN_ID`: Your numerical Telegram user ID (from [@userinfobot](https://t.me/userinfobot)).
+Edit `.env` with your credentials:
+```env
+TELEGRAM_BOT_TOKEN=your_bot_token_from_botfather
+TELEGRAM_CHANNEL_ID=-100xxxxxxxxxx
+TELEGRAM_ADMIN_ID=your_numeric_user_id
+```
 
 ---
 
 ## Usage
 
-### 1. Launch Real-Time Monitoring
+### 1. Real-Time Monitoring (`watcher.js`)
 ```bash
 node watcher.js
 ```
-1. Chromium will launch. On first start, scan the WhatsApp QR code (session is saved locally in `whatsapp-profile/`).
-2. Open the desired WhatsApp channel.
-3. The watcher will detect the channel, index existing posts to prevent duplicate blasting, and stream all new posts to Telegram.
+* On initial run, Chromium launches. Scan the WhatsApp Web QR code once (credentials persist in `whatsapp-profile/`).
+* Open your target channel in WhatsApp. The watcher detects the active channel and streams new posts to Telegram.
 
-### 2. Send Historical Posts
+### 2. Historical Message Transfer (`sender.js`)
+Transfer backlogged posts with custom batch sizes:
 ```bash
 # Send latest 5 posts
 node sender.js --count 5
 
-# Scroll 4 times to fetch deeper history and send latest 15 posts
+# Scroll 4 times to load deeper history and send latest 15 posts
 node sender.js --count 15 --scroll 4
 ```
 
-### 3. Manage Telegram Channel Posts
+### 3. Telegram Channel Cleanup (`cleaner.js`)
+Manage or purge destination channel posts via an interactive terminal menu:
 ```bash
 node cleaner.js
 ```
-Presents an interactive menu to clean posts by date, time window, or keyword.
 
 ---
 
-## Engineering & QA Highlights
+## Testing
 
-| Engineering Problem | Solution Implemented |
+The project uses Node.js's native `node:test` runner. Tests are completely isolated from live browser sessions and live Telegram tokens through dependency injection and temporary test directories.
+
+Run the test suite:
+```bash
+npm test
+```
+
+The test suite currently contains **36 automated unit tests** across 5 test suites:
+* **`config.test.js`**: Environment variable presence, missing token handling, and admin flag checks.
+* **`message-parser.test.js`**: Whitespace trimming, object structure, null/empty ID handling, and malformed inputs.
+* **`message-storage.test.js`**: Disk persistence, state restoration, duplicate elimination, and corrupt JSON resilience.
+* **`telegram-sender.test.js`**: Mocked 429 rate-limit retry sequences, `retry_after` backoff calculations, non-429 immediate errors, and retry exhaustion.
+* **`telegram-utils.test.js`**: Boundary-aware message splitting, newline/space priorities, hard cuts, and `[Part X/Y]` indicator injection.
+
+Tests are automatically executed on every push and pull request via **GitHub Actions**.
+
+---
+
+## Engineering Highlights
+
+| Challenge | Solution |
 | :--- | :--- |
-| **Session Persistence** | Dedicated Chromium profile cache persists authentication without re-authenticating. |
-| **DOM Element Mutation** | Multi-selector fallback strategy for expanding collapsible messages (`Read more`). |
-| **API Rate Limiting (429)** | Dynamic backoff matching Telegram API's `retry_after` header + 3 max retries. |
-| **Duplicate Delivery on Crash** | Two-phase commit: in-memory detection + disk write *only* post-HTTP 200 response. |
+| **Session Persistence** | Persistent Chromium profile preserves cookies, avoiding daily QR re-authentication. |
+| **Dynamic DOM Collapsing** | Multi-locator fallback strategy discovers and expands WhatsApp's *"Read more"* buttons before reading text. |
+| **API Rate Limiting (429)** | Dynamic backoff engine reads Telegram's `retry_after` header and performs bounded retries. |
+| **Duplicate Delivery on Crash** | Two-phase commit: in-memory discovery + atomic disk write *only* post-HTTP 200 acknowledgment. |
 | **Large Payload Handling** | Context-preserving text splitting at newline boundaries (<4,000 characters). |
+| **Test State Isolation** | Test suites use isolated `os.tmpdir()` folders and mock APIs to ensure zero production state pollution. |
+
+---
+
+## Limitations
+
+* Requires an authenticated WhatsApp Web session with periodic QR verification.
+* WhatsApp DOM selectors may require updates if WhatsApp changes its web interface.
+* The watcher currently operates as a local process rather than a containerized background service.
+* Telegram Bot API limits channel administration methods without elevated bot rights.
+
+---
+
+## Future Improvements
+
+* Containerized headless execution using Docker.
+* Multi-channel concurrent monitoring.
+* Optional SQLite database storage for richer message search and querying.
 
 ---
 
