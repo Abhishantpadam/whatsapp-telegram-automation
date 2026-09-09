@@ -1,4 +1,6 @@
-# WhatsApp → Telegram Channel Automation & Management Tool
+# WhatsApp → Telegram Channel Archiver
+
+[![CI](https://github.com/Abhishantpadam/whatsapp-telegram-automation/actions/workflows/ci.yml/badge.svg)](https://github.com/Abhishantpadam/whatsapp-telegram-automation/actions/workflows/ci.yml)
 
 A robust browser automation and data pipeline built with **Node.js**, **Playwright**, and the **Telegram Bot API**. It monitors WhatsApp channels in real time, extracts new text posts, and forwards them to a Telegram channel with persistent state tracking, smart message chunking, and rate-limit handling.
 
