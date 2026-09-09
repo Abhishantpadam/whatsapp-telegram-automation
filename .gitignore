@@ -1,0 +1,11 @@
+# Dependencies
+node_modules/
+
+# Environment secrets
+.env
+
+# WhatsApp browser session & cookies
+whatsapp-profile/
+
+# Runtime message history (exclude local state, keep folder)
+data/seen-messages.json
