@@ -168,7 +168,7 @@ function extractDateFromText(text) {
     const options = parseArgs();
 
     if (!options.count && !options.date) {
-        printHelp();
+        showHelp();
         console.error(
             "❌ Please specify --count or --date"
         );
