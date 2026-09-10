@@ -61,11 +61,43 @@ async function getExistingMessageIds(page) {
 
 async function expandReadMore(messageLocator) {
     try {
+        // 1. Try DOM evaluation first to find and click the innermost "Read more" button
+        const expandedViaDom = await messageLocator.evaluate((msgEl) => {
+            const allElements = Array.from(msgEl.querySelectorAll("*"));
+            const candidates = allElements.filter((el) => {
+                const text = (el.textContent || "").trim();
+                return /read more/i.test(text);
+            });
+
+            // Innermost elements come last in document order among descendants
+            const buttonEl = candidates.reverse().find((el) => {
+                const text = (el.textContent || "").trim();
+                return (
+                    el.getAttribute("role") === "button" ||
+                    el.tagName === "BUTTON" ||
+                    /^(…|\.\.\.)?\s*read more$/i.test(text)
+                );
+            });
+
+            if (buttonEl) {
+                buttonEl.scrollIntoView?.({ block: "center" });
+                buttonEl.click();
+                return true;
+            }
+            return false;
+        });
+
+        if (expandedViaDom) {
+            await new Promise((r) => setTimeout(r, 800));
+            return;
+        }
+
+        // 2. Fallback: targeted Playwright locators (preferring role="button" over general spans)
         const selectors = [
-            'span:has-text("Read more")',
-            'button:has-text("Read more")',
             '[role="button"]:has-text("Read more")',
-            '[data-testid="read-more"]'
+            'button:has-text("Read more")',
+            '[data-testid="read-more"]',
+            'span[role="button"]:has-text("Read more")'
         ];
 
         for (const sel of selectors) {
