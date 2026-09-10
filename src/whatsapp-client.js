@@ -59,59 +59,167 @@ async function getExistingMessageIds(page) {
     }
 }
 
-async function expandReadMore(messageLocator) {
+async function expandReadMore(messageLocator, customPage = null) {
     try {
-        // 1. Try DOM evaluation first to find and click the innermost "Read more" button
-        const expandedViaDom = await messageLocator.evaluate((msgEl) => {
-            const allElements = Array.from(msgEl.querySelectorAll("*"));
-            const candidates = allElements.filter((el) => {
-                const text = (el.textContent || "").trim();
-                return /read more/i.test(text);
-            });
+        const page =
+            customPage ||
+            (typeof messageLocator.page === "function"
+                ? messageLocator.page()
+                : null);
 
-            // Innermost elements come last in document order among descendants
-            const buttonEl = candidates.reverse().find((el) => {
-                const text = (el.textContent || "").trim();
-                return (
-                    el.getAttribute("role") === "button" ||
-                    el.tagName === "BUTTON" ||
-                    /^(…|\.\.\.)?\s*read more$/i.test(text)
-                );
-            });
+        // 1. Check if the message contains "Read more"
+        const initialText = await messageLocator
+            .innerText({ timeout: 2500 })
+            .catch(() => "");
 
-            if (buttonEl) {
-                buttonEl.scrollIntoView?.({ block: "center" });
-                buttonEl.click();
-                return true;
-            }
+        if (!/read more/i.test(initialText)) {
             return false;
-        });
-
-        if (expandedViaDom) {
-            await new Promise((r) => setTimeout(r, 800));
-            return;
         }
 
-        // 2. Fallback: targeted Playwright locators (preferring role="button" over general spans)
-        const selectors = [
-            '[role="button"]:has-text("Read more")',
-            'button:has-text("Read more")',
-            '[data-testid="read-more"]',
-            'span[role="button"]:has-text("Read more")'
+        console.log("  🔍 Truncated post detected with 'Read more'. Expanding...");
+
+        // Ensure message is scrolled into view
+        await messageLocator.scrollIntoViewIfNeeded().catch(() => {});
+        if (page) {
+            await page.waitForTimeout(300);
+        }
+
+        // 2. Candidate locators targeting innermost button element (.last() picks innermost)
+        const candidates = [
+            messageLocator.getByText(/read more/i).last(),
+            messageLocator.locator('[role="button"]:has-text("Read more")').last(),
+            messageLocator.locator('button:has-text("Read more")').last(),
+            messageLocator.locator('[data-testid="read-more"]').last(),
+            messageLocator.locator('span[role="button"]:has-text("Read more")').last(),
+            messageLocator.locator('div[role="button"]:has-text("Read more")').last(),
+            messageLocator.locator('span:has-text("Read more")').last()
         ];
 
-        for (const sel of selectors) {
-            const btn = messageLocator.locator(sel);
+        for (const candidate of candidates) {
+            try {
+                if (
+                    await candidate
+                        .isVisible({ timeout: 1000 })
+                        .catch(() => false)
+                ) {
+                    await candidate.scrollIntoViewIfNeeded().catch(() => {});
 
-            if ((await btn.count()) > 0) {
-                await btn.first().scrollIntoViewIfNeeded();
-                await btn.first().click({ force: true });
-                await new Promise((r) => setTimeout(r, 800));
-                break;
+                    // Primary: Playwright CDP click (hardware input)
+                    await candidate
+                        .click({ timeout: 2000, force: true })
+                        .catch(() => {});
+
+                    // Secondary: Dispatch full mouse/pointer events to trigger React synthetic events
+                    await candidate
+                        .evaluate((el) => {
+                            const eventTypes = [
+                                "pointerdown",
+                                "mousedown",
+                                "pointerup",
+                                "mouseup",
+                                "click"
+                            ];
+                            for (const type of eventTypes) {
+                                el.dispatchEvent(
+                                    new MouseEvent(type, {
+                                        bubbles: true,
+                                        cancelable: true,
+                                        view: window
+                                    })
+                                );
+                            }
+                        })
+                        .catch(() => {});
+
+                    // Poll to verify if text expanded
+                    for (let attempt = 0; attempt < 5; attempt++) {
+                        if (page) {
+                            await page.waitForTimeout(400);
+                        } else {
+                            await new Promise((r) => setTimeout(r, 400));
+                        }
+                        const currentText = await messageLocator
+                            .innerText()
+                            .catch(() => "");
+                        if (!/read more/i.test(currentText)) {
+                            console.log(
+                                "  ✅ Successfully expanded 'Read more'!"
+                            );
+                            return true;
+                        }
+                    }
+                }
+            } catch {
+                // Continue to next candidate
             }
         }
-    } catch {
-        // Ignore if "Read more" click fails
+
+        // 3. Fallback: DOM traversal finding innermost element with "read more"
+        const domResult = await messageLocator
+            .evaluate((msgEl) => {
+                const all = Array.from(msgEl.querySelectorAll("*"));
+                const matching = all.filter((el) =>
+                    /read more/i.test(el.textContent || "")
+                );
+                const buttonEl =
+                    matching.reverse().find(
+                        (el) =>
+                            el.getAttribute("role") === "button" ||
+                            el.tagName === "BUTTON" ||
+                            /^(…|\.\.\.)?\s*read more$/i.test(
+                                (el.textContent || "").trim()
+                            )
+                    ) || matching[0];
+
+                if (buttonEl) {
+                    buttonEl.scrollIntoView?.({ block: "center" });
+                    const eventTypes = [
+                        "pointerdown",
+                        "mousedown",
+                        "pointerup",
+                        "mouseup",
+                        "click"
+                    ];
+                    for (const type of eventTypes) {
+                        buttonEl.dispatchEvent(
+                            new MouseEvent(type, {
+                                bubbles: true,
+                                cancelable: true,
+                                view: window
+                            })
+                        );
+                    }
+                    buttonEl.click?.();
+                    return true;
+                }
+                return false;
+            })
+            .catch(() => false);
+
+        if (domResult) {
+            if (page) {
+                await page.waitForTimeout(800);
+            } else {
+                await new Promise((r) => setTimeout(r, 800));
+            }
+            const finalText = await messageLocator
+                .innerText()
+                .catch(() => "");
+            if (!/read more/i.test(finalText)) {
+                console.log(
+                    "  ✅ Successfully expanded 'Read more' via DOM fallback!"
+                );
+                return true;
+            }
+        }
+
+        console.log(
+            "  ⚠️ Could not expand 'Read more' after trying all strategies."
+        );
+        return false;
+    } catch (err) {
+        console.log("  ⚠️ Error in expandReadMore:", err.message);
+        return false;
     }
 }
 

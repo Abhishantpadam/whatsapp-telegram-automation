@@ -8,6 +8,7 @@ const {
 } = require("./src/telegram-utils");
 
 const { sendTelegramMessage } = require("./src/telegram-sender");
+const { expandReadMore } = require("./src/whatsapp-client");
 const config = require("./src/config");
 
 // ===============================
@@ -106,71 +107,6 @@ async function sendTelegramPost(text) {
             );
         }
     }
-}
-
-// ===============================
-// EXPAND "READ MORE"
-// ===============================
-
-async function expandReadMore(message, page) {
-    try {
-        const expandedViaDom = await message.evaluate((msgEl) => {
-            const allElements = Array.from(msgEl.querySelectorAll("*"));
-            const candidates = allElements.filter((el) => {
-                const text = (el.textContent || "").trim();
-                return /read more/i.test(text);
-            });
-
-            const buttonEl = candidates.reverse().find((el) => {
-                const text = (el.textContent || "").trim();
-                return (
-                    el.getAttribute("role") === "button" ||
-                    el.tagName === "BUTTON" ||
-                    /^(…|\.\.\.)?\s*read more$/i.test(text)
-                );
-            });
-
-            if (buttonEl) {
-                buttonEl.scrollIntoView?.({ block: "center" });
-                buttonEl.click();
-                return true;
-            }
-            return false;
-        });
-
-        if (expandedViaDom) {
-            await page.waitForTimeout(800);
-            return true;
-        }
-
-        const selectors = [
-            '[role="button"]:has-text("Read more")',
-            'button:has-text("Read more")',
-            '[data-testid="read-more"]',
-            'span[role="button"]:has-text("Read more")'
-        ];
-
-        for (const sel of selectors) {
-            const btn = message.locator(sel);
-
-            if (await btn.count() > 0) {
-                await btn
-                    .first()
-                    .scrollIntoViewIfNeeded();
-
-                await btn
-                    .first()
-                    .click({ force: true });
-
-                await page.waitForTimeout(800);
-                return true;
-            }
-        }
-    } catch (error) {
-        // Ignore
-    }
-
-    return false;
 }
 
 // ===============================
